@@ -139,6 +139,14 @@
   }
   .icon-btn:hover{transform:translateY(-2px);background:#fff;}
   .icon-btn[aria-pressed="true"]{background:#ffe4ec;}
+  .icon-btn:disabled{cursor:wait;opacity:.7;transform:none;}
+  .capture-status{
+    position:fixed;top:max(62px, calc(env(safe-area-inset-top) + 52px));right:max(14px, env(safe-area-inset-right));z-index:12;
+    max-width:210px;padding:8px 12px;border-radius:10px;background:rgba(255,250,247,.94);color:var(--ink-soft);
+    box-shadow:0 6px 16px rgba(139,58,80,.14);font-size:.9rem;opacity:0;transform:translateY(-5px);
+    pointer-events:none;transition:opacity 180ms ease,transform 180ms ease;
+  }
+  .capture-status.show{opacity:1;transform:none;}
 
   main{
     position:relative;z-index:3;width:100%;max-width:960px;
@@ -373,6 +381,7 @@
   <button class="icon-btn" id="settings-btn" type="button" aria-controls="drawer" aria-expanded="false" title="Customize" aria-label="Open settings">✎</button>
   <button class="icon-btn" id="capture-btn" type="button" title="Capture whole page" aria-label="Capture whole page">▣</button>
 </div>
+<p class="capture-status" id="capture-status" role="status" aria-live="polite"></p>
 
 <!-- Accurate botanical tulips used in the corners (6 tepals, cup form, lanceolate leaves) -->
 <svg width="0" height="0" aria-hidden="true" style="position:absolute">
@@ -822,12 +831,34 @@
 
   /* whole-page capture */
   var captureBtn = document.getElementById('capture-btn');
+  var captureStatus = document.getElementById('capture-status');
+  function showCaptureStatus(message){
+    captureStatus.textContent = message;
+    captureStatus.classList.add('show');
+  }
+  function loadCaptureLibrary(){
+    if (typeof window.html2canvas === 'function') return Promise.resolve(window.html2canvas);
+    return new Promise(function(resolve, reject){
+      var fallback = document.createElement('script');
+      fallback.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+      fallback.onload = function(){
+        if (typeof window.html2canvas === 'function') resolve(window.html2canvas);
+        else reject(new Error('The capture library did not load.'));
+      };
+      fallback.onerror = function(){ reject(new Error('The capture library could not be loaded.')); };
+      document.head.appendChild(fallback);
+    });
+  }
+  function canvasToBlob(canvas){
+    return new Promise(function(resolve, reject){
+      if (!canvas.toBlob) { reject(new Error('This browser cannot create an image file.')); return; }
+      canvas.toBlob(function(blob){
+        if (blob) resolve(blob);
+        else reject(new Error('The image file could not be created.'));
+      }, 'image/png');
+    });
+  }
   captureBtn.addEventListener('click', async function(){
-    if (typeof window.html2canvas !== 'function') {
-      alert('The capture tool is unavailable. Please check your internet connection and try again.');
-      return;
-    }
-
     var originalTitle = document.title;
     var hidden = [];
     var selectors = ['.toolbar', '.gate', '.drawer', '.lightbox'];
@@ -841,17 +872,20 @@
 
     document.body.classList.add('capturing-page');
     captureBtn.disabled = true;
+    captureBtn.textContent = '…';
     captureBtn.setAttribute('aria-label', 'Capturing page');
     document.title = 'Capturing…';
+    showCaptureStatus('Creating your image…');
 
     try {
+      var html2canvas = await loadCaptureLibrary();
       var width = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth, document.documentElement.clientWidth);
       var height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
-      var canvas = await window.html2canvas(document.body, {
+      var canvas = await html2canvas(document.body, {
         backgroundColor: null,
         useCORS: true,
         allowTaint: false,
-        scale: Math.min(2, window.devicePixelRatio || 1),
+        scale: Math.min(1.5, window.devicePixelRatio || 1),
         width: width,
         height: height,
         windowWidth: width,
@@ -860,23 +894,32 @@
         scrollY: 0,
         x: 0,
         y: 0,
-        imageTimeout: 15000
+        imageTimeout: 3000
       });
 
+      var blob = await canvasToBlob(canvas);
       var link = document.createElement('a');
+      var imageUrl = URL.createObjectURL(blob);
       var date = new Date().toISOString().slice(0, 10);
       link.download = 'monthsary-page-' + date + '.png';
-      link.href = canvas.toDataURL('image/png');
+      link.href = imageUrl;
+      document.body.appendChild(link);
       link.click();
+      link.remove();
+      setTimeout(function(){ URL.revokeObjectURL(imageUrl); }, 1000);
+      showCaptureStatus('Image saved to your downloads.');
     } catch (err) {
       console.error('Page capture failed:', err);
+      showCaptureStatus('Could not create the image. Please try again.');
       alert('Could not capture the page. Please try again.');
     } finally {
       hidden.forEach(function(item){ item.el.style.display = item.display; });
       document.body.classList.remove('capturing-page');
       captureBtn.disabled = false;
+      captureBtn.textContent = '▣';
       captureBtn.setAttribute('aria-label', 'Capture whole page');
       document.title = originalTitle;
+      setTimeout(function(){ captureStatus.classList.remove('show'); }, 3500);
     }
   });
 
